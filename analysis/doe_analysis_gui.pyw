@@ -47,9 +47,16 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from scipy import stats as scipy_stats
 import seaborn as sns
 
+# Plotly imports for interactive plots
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import plotly.express as px
+import plotly.io as pio
+
 # Set plotting style
 sns.set_style("whitegrid")
 plt.rcParams['font.size'] = 9
+pio.templates.default = "plotly_white"  # Clean plotly theme
 
 # Suppress verbose Ax logging
 import logging
@@ -356,16 +363,101 @@ class DoEAnalyzer:
         return main_effects
 
 
+# Plotly-Tkinter Integration Helper
+
+class PlotlyTkViewer:
+    """Helper to display Plotly figures in tkinter using HTML widget"""
+
+    @staticmethod
+    def display_in_frame(fig, frame):
+        """Display Plotly figure in tkinter frame using HTML viewer"""
+        import tempfile
+        import webbrowser
+        from tkinter import ttk
+        import tkinter.font as tkFont
+
+        # Clear frame
+        for widget in frame.winfo_children():
+            widget.destroy()
+
+        # Create a container with view button
+        container = ttk.Frame(frame)
+        container.pack(fill='both', expand=True, padx=5, pady=5)
+
+        # Info label
+        info_frame = ttk.Frame(container)
+        info_frame.pack(fill='x', pady=(0,5))
+
+        ttk.Label(info_frame,
+                 text="📊 Interactive Plot Generated",
+                 font=tkFont.Font(size=10, weight='bold')).pack(side='left', padx=5)
+
+        view_btn = ttk.Button(info_frame,
+                             text="🌐 Open Interactive Plot in Browser",
+                             command=lambda: PlotlyTkViewer._open_in_browser(fig))
+        view_btn.pack(side='right', padx=5)
+
+        # Convert to static image for preview in tkinter
+        try:
+            from PIL import Image, ImageTk
+            import io
+
+            # Generate static image
+            img_bytes = pio.to_image(fig, format='png', width=1200, height=600, scale=2)
+            image = Image.open(io.BytesIO(img_bytes))
+
+            # Display in canvas with scrollbars
+            canvas = tk.Canvas(container, bg='white', highlightthickness=0)
+            v_scrollbar = ttk.Scrollbar(container, orient='vertical', command=canvas.yview)
+            h_scrollbar = ttk.Scrollbar(container, orient='horizontal', command=canvas.xview)
+
+            canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+
+            v_scrollbar.pack(side='right', fill='y')
+            h_scrollbar.pack(side='bottom', fill='x')
+            canvas.pack(side='left', fill='both', expand=True)
+
+            # Create image on canvas
+            photo = ImageTk.PhotoImage(image)
+            canvas.create_image(0, 0, anchor='nw', image=photo)
+            canvas.image = photo  # Keep reference
+            canvas.configure(scrollregion=canvas.bbox('all'))
+
+        except Exception as e:
+            # Fallback: just show the button
+            msg = ttk.Label(container,
+                          text=f"Click the button above to view the interactive plot.\n(Static preview unavailable: {str(e)})",
+                          justify='center')
+            msg.pack(expand=True)
+
+    @staticmethod
+    def _open_in_browser(fig):
+        """Open Plotly figure in web browser"""
+        import tempfile
+        import webbrowser
+        import os
+
+        # Create temporary HTML file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+            html_content = fig.to_html(include_plotlyjs='cdn', config={'displayModeBar': True})
+            f.write(html_content)
+            temp_path = f.name
+
+        # Open in browser
+        webbrowser.open('file://' + os.path.abspath(temp_path))
+
+
 # Plotter class for visualizations
 
 class DoEPlotter:
-    """Plotting functions for DoE"""
-    
+    """Plotting functions for DoE - Enhanced with Plotly"""
+
     def __init__(self):
         self.data = None
         self.factor_columns = []
         self.response_column = None
-        
+        self.use_plotly = True  # Flag to toggle between matplotlib and Plotly
+
     def set_data(self, data, factor_columns, response_column):
         """Set data for plotting"""
         self.data = data
@@ -373,46 +465,139 @@ class DoEPlotter:
         self.response_column = response_column
     
     def plot_main_effects(self, save_path=None):
-        """Create main effects plot"""
+        """Create main effects plot - Router to Plotly or matplotlib"""
+        if self.use_plotly:
+            return self.plot_main_effects_plotly(save_path)
+        else:
+            return self.plot_main_effects_matplotlib(save_path)
+
+    def plot_main_effects_plotly(self, save_path=None):
+        """Create interactive main effects plot using Plotly"""
         num_factors = len(self.factor_columns)
         ncols = min(3, num_factors)
         nrows = (num_factors + ncols - 1) // ncols
-        
+
+        # Create subplots
+        fig = make_subplots(
+            rows=nrows, cols=ncols,
+            subplot_titles=[f'<b>Main Effect: {factor}</b>' for factor in self.factor_columns],
+            vertical_spacing=0.12,
+            horizontal_spacing=0.10
+        )
+
+        for idx, factor in enumerate(self.factor_columns):
+            row = idx // ncols + 1
+            col = idx % ncols + 1
+
+            grouped = self.data.groupby(factor)[self.response_column].agg(['mean', 'std', 'count'])
+            levels = sorted(self.data[factor].unique())
+            means = [grouped.loc[level, 'mean'] for level in levels]
+            stds = [grouped.loc[level, 'std'] for level in levels]
+            counts = [grouped.loc[level, 'count'] for level in levels]
+
+            # Convert levels to strings for x-axis
+            x_labels = [str(level) for level in levels]
+
+            # Main line with markers
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels,
+                    y=means,
+                    mode='lines+markers',
+                    name=factor,
+                    line=dict(color='#4682B4', width=3),
+                    marker=dict(size=10, color='#4682B4', line=dict(width=2, color='white')),
+                    hovertemplate='<b>%{x}</b><br>' +
+                                 'Mean Response: %{y:.3f}<br>' +
+                                 '<extra></extra>',
+                    showlegend=False
+                ),
+                row=row, col=col
+            )
+
+            # Confidence interval (± 1 std dev)
+            upper = [m + s for m, s in zip(means, stds)]
+            lower = [m - s for m, s in zip(means, stds)]
+
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels + x_labels[::-1],
+                    y=upper + lower[::-1],
+                    fill='toself',
+                    fillcolor='rgba(70, 130, 180, 0.2)',
+                    line=dict(width=0),
+                    hoverinfo='skip',
+                    showlegend=False
+                ),
+                row=row, col=col
+            )
+
+            # Update axes for this subplot
+            fig.update_xaxes(title_text=f'<b>{factor}</b>', row=row, col=col,
+                           showgrid=True, gridcolor='lightgray', gridwidth=0.5)
+            fig.update_yaxes(title_text='<b>Mean Response</b>' if col == 1 else '',
+                           row=row, col=col,
+                           showgrid=True, gridcolor='lightgray', gridwidth=0.5)
+
+        # Update layout
+        fig.update_layout(
+            height=max(400, 300 * nrows),
+            width=1200,
+            title_text='<b>Main Effects Analysis</b>',
+            title_x=0.5,
+            title_font=dict(size=18),
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        if save_path:
+            fig.write_html(save_path.replace('.png', '.html'))
+            fig.write_image(save_path, width=1200, height=max(400, 300*nrows), scale=2)
+
+        return fig
+
+    def plot_main_effects_matplotlib(self, save_path=None):
+        """Create main effects plot using matplotlib (fallback)"""
+        num_factors = len(self.factor_columns)
+        ncols = min(3, num_factors)
+        nrows = (num_factors + ncols - 1) // ncols
+
         fig, axes = plt.subplots(nrows, ncols, figsize=(3*ncols, 2*nrows))
         if num_factors == 1:
             axes = [axes]
         else:
             axes = axes.flatten()
-        
+
         for idx, factor in enumerate(self.factor_columns):
             ax = axes[idx]
             grouped = self.data.groupby(factor)[self.response_column].agg(['mean', 'std'])
             levels = sorted(self.data[factor].unique())
             means = [grouped.loc[level, 'mean'] for level in levels]
             stds = [grouped.loc[level, 'std'] for level in levels]
-            
+
             ax.plot(range(len(levels)), means, 'o-', linewidth=2, markersize=8, color='steelblue')
             # Shaded region shows ± 1 std dev
-            ax.fill_between(range(len(levels)), 
+            ax.fill_between(range(len(levels)),
                            [m - s for m, s in zip(means, stds)],
                            [m + s for m, s in zip(means, stds)],
                            alpha=0.2, color='steelblue')
-            
+
             ax.set_xlabel(factor, fontsize=11, fontweight='bold')
             ax.set_ylabel('Mean Response', fontsize=11, fontweight='bold')
             ax.set_title(f'Main Effect: {factor}', fontsize=12, fontweight='bold')
             ax.set_xticks(range(len(levels)))
             ax.set_xticklabels(levels, rotation=45, ha='right')
             ax.grid(True, alpha=0.3)
-        
+
         for idx in range(num_factors, len(axes)):
             fig.delaxes(axes[idx])
-        
+
         plt.tight_layout(pad=0.5)
-        
+
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        
+
         return fig
     
     def plot_interaction_effects(self, save_path=None, max_factors=6):
@@ -1884,23 +2069,30 @@ class DoEAnalysisGUI:
         """Display main effects plot"""
         for widget in self.main_effects_frame.winfo_children():
             widget.destroy()
-        
+
         fig = self.plotter.plot_main_effects()
-        canvas = FigureCanvasTkAgg(fig, master=self.main_effects_frame)
-        canvas.draw()
-        canvas_widget = canvas.get_tk_widget()
-        canvas_widget.pack(fill='both', expand=True)
-        
-        # Bind mousewheel to the matplotlib canvas widget
-        if hasattr(self.main_effects_frame, '_bind_mousewheel'):
-            self.main_effects_frame._bind_mousewheel(canvas_widget)
-        
-        # Reset scroll position to top
-        if hasattr(self.main_effects_frame, '_scroll_canvas'):
-            self.main_effects_frame._scroll_canvas.update_idletasks()
-            self.main_effects_frame._scroll_canvas.yview_moveto(0)
-        
-        plt.close(fig)
+
+        # Check if it's a Plotly figure or matplotlib figure
+        if self.plotter.use_plotly and hasattr(fig, 'to_html'):
+            # Plotly figure - use custom viewer
+            PlotlyTkViewer.display_in_frame(fig, self.main_effects_frame)
+        else:
+            # Matplotlib figure - use traditional method
+            canvas = FigureCanvasTkAgg(fig, master=self.main_effects_frame)
+            canvas.draw()
+            canvas_widget = canvas.get_tk_widget()
+            canvas_widget.pack(fill='both', expand=True)
+
+            # Bind mousewheel to the matplotlib canvas widget
+            if hasattr(self.main_effects_frame, '_bind_mousewheel'):
+                self.main_effects_frame._bind_mousewheel(canvas_widget)
+
+            # Reset scroll position to top
+            if hasattr(self.main_effects_frame, '_scroll_canvas'):
+                self.main_effects_frame._scroll_canvas.update_idletasks()
+                self.main_effects_frame._scroll_canvas.yview_moveto(0)
+
+            plt.close(fig)
     
     def display_interaction_plot(self):
         """Display interaction plot"""
