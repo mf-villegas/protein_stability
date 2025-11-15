@@ -975,6 +975,10 @@ class BayesianOptimizer:
         "Reducing Agent" → "reducing_agent" (categorical)
         "Reducing Agent (mM)" → "reducing_agent_concentration"
         """
+        # Handle None or empty column names
+        if column_name is None or not column_name:
+            return None
+
         name = column_name.strip()
         
         # Special case: Buffer pH (keep as-is for BO)
@@ -1062,8 +1066,8 @@ class BayesianOptimizer:
             wb = openpyxl.load_workbook(excel_path)
             ws = wb.active
             
-            # Get headers
-            headers = [cell.value for cell in ws[1]]
+            # Get headers (filter out None values from empty cells)
+            headers = [cell.value for cell in ws[1] if cell.value is not None]
             
             # Find the ACTUAL last row with data (not just max_row which includes empty rows)
             last_row_with_data = 1
