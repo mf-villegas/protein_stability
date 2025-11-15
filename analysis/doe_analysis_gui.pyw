@@ -366,47 +366,47 @@ class DoEAnalyzer:
 # Plotly-Tkinter Integration Helper
 
 class PlotlyTkViewer:
-    """Helper to display Plotly figures in tkinter using HTML widget"""
+    """Helper to display Plotly figures in tkinter - shows plot in GUI + browser option"""
 
     @staticmethod
-    def display_in_frame(fig, frame):
-        """Display Plotly figure in tkinter frame using HTML viewer"""
-        import tempfile
-        import webbrowser
-        from tkinter import ttk
+    def display_in_frame(fig, frame, plot_name="plot"):
+        """Display Plotly figure directly in tkinter frame with browser/export options"""
+        from tkinter import ttk, filedialog
         import tkinter.font as tkFont
+        from PIL import Image, ImageTk
+        import io
 
         # Clear frame
         for widget in frame.winfo_children():
             widget.destroy()
 
-        # Create a container with view button
+        # Create a container
         container = ttk.Frame(frame)
         container.pack(fill='both', expand=True, padx=5, pady=5)
 
-        # Info label
-        info_frame = ttk.Frame(container)
-        info_frame.pack(fill='x', pady=(0,5))
+        # Action buttons at top
+        button_frame = ttk.Frame(container)
+        button_frame.pack(fill='x', pady=(0, 5))
 
-        ttk.Label(info_frame,
-                 text="📊 Interactive Plot Generated",
-                 font=tkFont.Font(size=10, weight='bold')).pack(side='left', padx=5)
+        ttk.Button(button_frame,
+                   text="🌐 Open Interactive in Browser",
+                   command=lambda: PlotlyTkViewer._open_in_browser(fig)).pack(side='left', padx=2)
 
-        view_btn = ttk.Button(info_frame,
-                             text="🌐 Open Interactive Plot in Browser",
-                             command=lambda: PlotlyTkViewer._open_in_browser(fig))
-        view_btn.pack(side='right', padx=5)
+        ttk.Button(button_frame,
+                   text="💾 Export High-Quality (300 DPI)",
+                   command=lambda: PlotlyTkViewer._export_high_quality(fig, plot_name)).pack(side='left', padx=2)
 
-        # Convert to static image for preview in tkinter
+        ttk.Label(button_frame,
+                 text="Tip: Hover over plot in browser for interactivity",
+                 font=tkFont.Font(size=9)).pack(side='left', padx=10)
+
+        # Display static image in tkinter (good quality for viewing)
         try:
-            from PIL import Image, ImageTk
-            import io
-
-            # Generate static image
-            img_bytes = pio.to_image(fig, format='png', width=1200, height=600, scale=2)
+            # Generate high-res static preview
+            img_bytes = pio.to_image(fig, format='png', width=1400, height=800, scale=2)
             image = Image.open(io.BytesIO(img_bytes))
 
-            # Display in canvas with scrollbars
+            # Create canvas with scrollbars
             canvas = tk.Canvas(container, bg='white', highlightthickness=0)
             v_scrollbar = ttk.Scrollbar(container, orient='vertical', command=canvas.yview)
             h_scrollbar = ttk.Scrollbar(container, orient='horizontal', command=canvas.xview)
@@ -417,18 +417,19 @@ class PlotlyTkViewer:
             h_scrollbar.pack(side='bottom', fill='x')
             canvas.pack(side='left', fill='both', expand=True)
 
-            # Create image on canvas
+            # Display image
             photo = ImageTk.PhotoImage(image)
             canvas.create_image(0, 0, anchor='nw', image=photo)
             canvas.image = photo  # Keep reference
             canvas.configure(scrollregion=canvas.bbox('all'))
 
         except Exception as e:
-            # Fallback: just show the button
-            msg = ttk.Label(container,
-                          text=f"Click the button above to view the interactive plot.\n(Static preview unavailable: {str(e)})",
-                          justify='center')
-            msg.pack(expand=True)
+            # Fallback message
+            error_msg = ttk.Label(container,
+                                 text=f"⚠️  Could not display preview: {str(e)}\n\n"
+                                      "Click 'Open Interactive in Browser' above to view the plot.",
+                                 justify='center')
+            error_msg.pack(expand=True)
 
     @staticmethod
     def _open_in_browser(fig):
@@ -445,6 +446,49 @@ class PlotlyTkViewer:
 
         # Open in browser
         webbrowser.open('file://' + os.path.abspath(temp_path))
+
+    @staticmethod
+    def _export_high_quality(fig, plot_name):
+        """Export publication-quality image (300 DPI) - FREE with Plotly!"""
+        from tkinter import filedialog, messagebox
+        from datetime import datetime
+
+        # Ask user for save location
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        default_name = f"{plot_name}_{timestamp}.png"
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG Image (300 DPI)", "*.png"),
+                      ("PDF Vector (scalable)", "*.pdf"),
+                      ("SVG Vector (scalable)", "*.svg")],
+            initialfile=default_name,
+            title="Export Publication-Quality Plot"
+        )
+
+        if filepath:
+            try:
+                # Determine format from extension
+                if filepath.endswith('.pdf'):
+                    # PDF: Vector format, scales perfectly for print
+                    fig.write_image(filepath, format='pdf', width=1200, height=800, scale=3)
+                elif filepath.endswith('.svg'):
+                    # SVG: Vector format for editing in Illustrator/Inkscape
+                    fig.write_image(filepath, format='svg', width=1200, height=800)
+                else:  # PNG
+                    # PNG: Export at 300 DPI equivalent (scale=3 gives ~300 DPI for print)
+                    # This is COMPLETELY FREE - no payment needed!
+                    fig.write_image(filepath, format='png', width=1200, height=800, scale=3)
+
+                messagebox.showinfo("Success",
+                                   f"High-quality plot exported to:\n{filepath}\n\n"
+                                   f"Resolution: 300 DPI (publication-ready)\n"
+                                   f"This is FREE with Plotly - no payment needed!")
+            except Exception as e:
+                messagebox.showerror("Export Error",
+                                   f"Failed to export:\n{str(e)}\n\n"
+                                   f"Make sure 'kaleido' is installed:\n"
+                                   f"pip install kaleido")
 
 
 # Plotter class for visualizations
@@ -2075,7 +2119,7 @@ class DoEAnalysisGUI:
         # Check if it's a Plotly figure or matplotlib figure
         if self.plotter.use_plotly and hasattr(fig, 'to_html'):
             # Plotly figure - use custom viewer
-            PlotlyTkViewer.display_in_frame(fig, self.main_effects_frame)
+            PlotlyTkViewer.display_in_frame(fig, self.main_effects_frame, plot_name="main_effects")
         else:
             # Matplotlib figure - use traditional method
             canvas = FigureCanvasTkAgg(fig, master=self.main_effects_frame)
