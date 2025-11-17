@@ -37,10 +37,10 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
 
-    # 4. Run tests with coverage
+    # 4. Run tests with coverage (core only - GUI requires tkinter/display)
     - name: Run tests
       run: |
-        pytest tests/ -v --cov=core --cov=gui --cov-report=xml --cov-report=term
+        pytest tests/ -v --cov=core --cov-report=xml --cov-report=term
 
     # 5. Upload coverage to see trends over time
     - name: Upload coverage reports
@@ -55,4 +55,4 @@ jobs:
     - name: Check coverage threshold
       if: matrix.python-version == '3.11' && matrix.os == 'ubuntu-latest'
       run: |
-        pytest tests/ --cov=core --cov=gui --cov-fail-under=40
+        pytest tests/ --cov=core --cov-fail-under=40
